@@ -521,11 +521,14 @@ class ManagedRepl(name: String = "stateless")(using Context):
     * session keeps its prior state. On timeout the run's permissions are
     * revoked, its sandbox's stop flag is set, so REPL code throws
     * `ThreadDeath` at its next method call or loop iteration, and it is
-    * interrupted, which ends blocking I/O and sleeps. A run stuck in library
-    * or JDK code (a CPU-bound call, a blocking oracle) reaches none of these
-    * and keeps running. Such a thread is kept as [[abandoned]] and blocks
-    * only this session, until it ends. This is *not* a hard sandbox; true
-    * preemption requires process isolation.
+    * interrupted, which ends blocking I/O and sleeps. Inside `Classified.map`
+    * both are swallowed, since the library keeps every throwable inside the
+    * `Classified`; the flag stays set, so the run stops at its next check
+    * outside. A run stuck in library or JDK code (a CPU-bound call, a
+    * blocking oracle) reaches none of these and keeps running. Such a thread
+    * is kept as [[abandoned]] and blocks only this session, until it ends.
+    * This is *not* a hard sandbox; true preemption requires process
+    * isolation.
     */
   private def dispatchWithTimeout(res: ParseResult, limitMs: Long): ExecutionResult =
     val resultRef = java.util.concurrent.atomic.AtomicReference[(State, String, Option[Throwable])]()
