@@ -7,9 +7,10 @@ name: Scala CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "forkmain" ]
+  # Every PR, so that stacked PRs (based on another PR's branch) run too.
   pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
   release:
     types: [ published ]
 
