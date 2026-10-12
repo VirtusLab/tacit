@@ -229,6 +229,20 @@ class LibraryIntegrationSuite extends munit.FunSuite:
     assert(result.output.contains("SecurityException") && result.output.contains("not within any allowed root"),
       s"expected the server's allowedRoots bound to apply, got: ${result.output}")
 
+  test("a SandboxInterface built by agent code cannot widen the file system it builds"):
+    // createFS builds the file system after requestFileSystem checked the
+    // root; an override calling it with a wider root would skip the check.
+    for safeMode <- List(true, false) do
+      given Context = Context(Config(safeMode = safeMode), None)
+      val result = ScalaExecutor.execute("""
+        object evil extends tacit.library.SandboxInterface:
+          override def createFS(root: String, filter: String -> Boolean, cp: Set[String], cw: Boolean, ro: Boolean, rop: Set[String], wd: String) =
+            super.createFS("/", filter, Set.empty, cw, false, Set.empty, wd)
+        evil.requestFileSystem(".") { evil.access("/etc/hosts").read() }
+      """)
+      assert(!result.success, s"safeMode=$safeMode: expected a compile error, got: ${result.output}")
+      assert(!result.output.contains("localhost"), s"safeMode=$safeMode: leaked: ${result.output}")
+
   test("cannot implement the Network capability anonymously"):
     assertCompileError(
       """given tacit.library.Network with
@@ -269,6 +283,27 @@ class LibraryIntegrationSuite extends munit.FunSuite:
       """,
       "capture"
     )
+
+  test("Classified.map cannot print through GlobalIOCap passed explicitly"):
+    // The preamble's `given IOCapability` is tracked, so a closure using it is
+    // impure; naming the singleton behind it must not be a way around that.
+    assertCompileError(
+      """
+      val secret = classify("password")
+      secret.map(x => { println(x)(using tacit.library.GlobalIOCap); x })
+      """,
+      "safe code"
+    )
+
+  test("a fatal error thrown inside Classified.map does not reach agent code"):
+    val result = ScalaExecutor.execute(
+      """
+      val secret = classify("password")
+      secret.map(x => throw InterruptedException(s"leaked: $x"))
+      """
+    )
+    assert(result.success, s"execution failed: ${result.error.getOrElse(result.output)}")
+    assert(!result.output.contains("password"), s"leaked: ${result.output}")
 
   test("Classified.map cannot exfiltrate via a captured mutable Array cell"):
     // The secret must not escape the pure map closure by being written into a

@@ -61,6 +61,20 @@ class ClassifiedSuite extends munit.FunSuite:
     assert(ClassifiedImpl.unwrap(result).isFailure)
   }
 
+  test("fatal errors thrown by map, flatMap or wrap stay inside the Classified") {
+    val secret = ClassifiedImpl.wrap("super-secret-password")
+    val thrown: List[String -> Throwable] = List(
+      s => InterruptedException(s"leaked: $s"),
+      s => StackOverflowError(s"leaked: $s"),
+      s => new scala.util.control.ControlThrowable(s"leaked: $s") {}
+    )
+    thrown.foreach { mk =>
+      assert(ClassifiedImpl.unwrap(secret.map(s => throw mk(s))).isFailure)
+      assert(ClassifiedImpl.unwrap(secret.flatMap(s => throw mk(s))).isFailure)
+      assert(ClassifiedImpl.unwrap(ClassifiedImpl.wrap(throw mk("x"))).isFailure)
+    }
+  }
+
   // ── File system classified path enforcement (VirtualFileSystem) ───────
 
   val interface: Interface^{} = new InterfaceImpl(
@@ -158,6 +172,21 @@ class ClassifiedSuite extends munit.FunSuite:
       file.writeClassified(classify("top-secret"))
       val content = file.readClassified()
       assertEquals(content.toString, "Classified(***)")
+    }
+  }
+
+  test("a failed writeClassified() still creates the file and keeps existing content") {
+    // Otherwise `exists` after the write tells agent code whether a
+    // secret-dependent computation failed, one bit per write.
+    requestFileSystem("/virtual") {
+      val failed = ClassifiedImpl.wrap[String](throw RuntimeException("no"))
+      val fresh = access("/virtual/secret/fresh.txt")
+      fresh.writeClassified(failed)
+      assert(fresh.exists)
+      val kept = access("/virtual/secret/kept.txt")
+      kept.writeClassified(classify("old"))
+      kept.writeClassified(failed)
+      assertEquals(ClassifiedImpl.unwrap(kept.readClassified()).get, "old")
     }
   }
 

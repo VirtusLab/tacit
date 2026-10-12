@@ -125,8 +125,14 @@ class WebOpsSuite extends munit.FunSuite:
   test("httpGet rejects URL with no host"):
     given Network = NetworkImpl(Set("localhost"))
     val ex = intercept[SecurityException]:
-      get("file:///etc/passwd")
+      get("http:///etc/passwd")
     assert(ex.getMessage.nn.contains("no host"))
+
+  test("httpGet rejects schemes other than http and https, even with an allowed host"):
+    given Network = NetworkImpl(Set("localhost"))
+    for url <- List("file://localhost/etc/hosts", "ftp://localhost/x", "jar:http://localhost/x!/y") do
+      val ex = intercept[SecurityException](get(url))
+      assert(ex.getMessage.nn.contains("only http and https"), s"$url: ${ex.getMessage}")
 
   test("httpPost returns error body on 404"):
     given Network = NetworkImpl(Set("localhost"))
@@ -166,11 +172,23 @@ class WebOpsSuite extends munit.FunSuite:
     val result = WebOps.httpGet(s"$baseUrl/whoami", Map.empty, Map("Authorization" -> token))
     assertEquals(result, "Bearer secret-xyz")                    // yet transmitted to the allowlisted host
 
-  test("secretHeaders: a failed Classified value aborts the request"):
+  test("secretHeaders: a failed Classified value aborts the request without its exception"):
     given Network = NetworkImpl(Set("localhost"))
-    val bad = ClassifiedImpl.wrap[String](throw RuntimeException("boom"))
-    intercept[RuntimeException]:
+    // The computation's exception may carry the secret, e.g. map(v => throw E(v)).
+    val bad = ClassifiedImpl.wrap[String](throw RuntimeException("secret-xyz"))
+    val e = intercept[IllegalArgumentException]:
       WebOps.httpGet(s"$baseUrl/whoami", Map.empty, Map("Authorization" -> bad))
+    assert(!e.getMessage.nn.contains("secret-xyz"), e.getMessage)
+    assertEquals(e.getCause, null)
+
+  test("secretHeaders: an invalid Classified value aborts the request without quoting it"):
+    given Network = NetworkImpl(Set("localhost"))
+    // The JDK's own message for an invalid header value quotes the value.
+    val bad = ClassifiedImpl.wrap("Bearer secret-xyz\nX-Injected: 1")
+    val e = intercept[IllegalArgumentException]:
+      WebOps.httpGet(s"$baseUrl/whoami", Map.empty, Map("Authorization" -> bad))
+    assert(!e.getMessage.nn.contains("secret-xyz"), e.getMessage)
+    assertEquals(e.getCause, null)
 
   test("httpRequest issues an arbitrary method and returns status + body"):
     given Network = NetworkImpl(Set("localhost"))
